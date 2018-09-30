@@ -9,6 +9,6 @@ var Home = HomeController{}
 
 func RegisterHandlers() error {
 	http.Handle("/", Home)
-	http.Handle("/order/", Order)
+	http.Handle("/order/", http.StripPrefix("/order/", Order))
 	return nil
 }
