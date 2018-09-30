@@ -1,17 +1,25 @@
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/go-redis/redis"
+	"github.com/omarqazi/airtrafficcontrol/model"
 	"log"
 	"net/http"
+	"os"
 )
 
 var redisClient *redis.Client = nil
 
 func init() {
+	redisAddress := "localhost:6379"
+	redisOverride := os.Getenv("REDIS_ADDR")
+	if len(redisOverride) > 0 {
+		redisAddress = redisOverride
+	}
 	redisClient = redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
+		Addr:     redisAddress,
 		Password: "",
 		DB:       0,
 	})
@@ -47,9 +55,39 @@ func (oc OrderController) OrderQueueLength(w http.ResponseWriter, r *http.Reques
 }
 
 func (oc OrderController) TakeOrder(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "your order is coming right up")
+	decoder := json.NewDecoder(r.Body)
+	var requestOrder model.Order
+	if err := decoder.Decode(&requestOrder); err != nil {
+		w.WriteHeader(400)
+		fmt.Fprintln(w, "cant parse your shitty json... check it for mistakes")
+		return
+	}
+
+	ordersWaiting, err := redisClient.RPush("smick-drone-orders", requestOrder.ToJSON()).Result()
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Fprintln(w, "error saving your order")
+	} else {
+		fmt.Fprintln(w, "your order is coming right up", ordersWaiting)
+	}
 }
 
 func (oc OrderController) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "uhhh haha yeah we are working on it")
+	listResults, err := redisClient.LRange("smick-drone-orders", 0, -1).Result()
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Fprintln(w, "error getting order status")
+		return
+	}
+
+	parsedOrders := make([]model.Order, 0)
+
+	for i := range listResults {
+		var parsedOrder model.Order
+		json.Unmarshal([]byte(listResults[i]), &parsedOrder)
+		parsedOrders = append(parsedOrders, parsedOrder)
+	}
+
+	encoder := json.NewEncoder(w)
+	encoder.Encode(parsedOrders)
 }
