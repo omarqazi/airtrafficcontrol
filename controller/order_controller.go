@@ -35,12 +35,18 @@ type OrderController struct {
 func (oc OrderController) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestUrl := r.URL.Path
 
+	w.Header().Add("Content-Type", "application/json")
+
 	if len(requestUrl) == 0 && r.Method == "GET" {
 		oc.OrderQueueLength(w, r)
 	} else if r.Method == "POST" {
 		oc.TakeOrder(w, r)
-	} else if r.Method == "GET" {
-		oc.GetOrderStatus(w, r)
+	} else if r.Method == "GET" && requestUrl == "list" {
+		oc.GetAllOrders(w, r)
+	} else if r.Method == "GET" && requestUrl == "next" {
+		oc.GetNextOrder(w, r)
+	} else if r.Method == "PUT" {
+		oc.PopTopOrder(w, r)
 	}
 }
 
@@ -62,6 +68,7 @@ func (oc OrderController) TakeOrder(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "cant parse your shitty json... check it for mistakes")
 		return
 	}
+	requestOrder.GenerateId()
 
 	ordersWaiting, err := redisClient.RPush("smick-drone-orders", requestOrder.ToJSON()).Result()
 	if err != nil {
@@ -72,7 +79,22 @@ func (oc OrderController) TakeOrder(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (oc OrderController) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
+func (oc OrderController) GetNextOrder(w http.ResponseWriter, r *http.Request) {
+	topItem, err := redisClient.LIndex("smick-drone-orders", 0).Result()
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Fprintln(w, "error getting next order")
+		return
+	}
+
+	var topOrder model.Order
+	json.Unmarshal([]byte(topItem), &topOrder)
+
+	encoder := json.NewEncoder(w)
+	encoder.Encode(topOrder)
+}
+
+func (oc OrderController) GetAllOrders(w http.ResponseWriter, r *http.Request) {
 	listResults, err := redisClient.LRange("smick-drone-orders", 0, -1).Result()
 	if err != nil {
 		w.WriteHeader(500)
@@ -90,4 +112,19 @@ func (oc OrderController) GetOrderStatus(w http.ResponseWriter, r *http.Request)
 
 	encoder := json.NewEncoder(w)
 	encoder.Encode(parsedOrders)
+}
+
+func (oc OrderController) PopTopOrder(w http.ResponseWriter, r *http.Request) {
+	topOrder, err := redisClient.LPop("smick-drone-orders").Result()
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Fprintln(w, "Error popping top order")
+		return
+	}
+
+	var parsedOrder model.Order
+	json.Unmarshal([]byte(topOrder), &parsedOrder)
+
+	encoder := json.NewEncoder(w)
+	encoder.Encode(parsedOrder)
 }
