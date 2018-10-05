@@ -3,33 +3,11 @@ package controller
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/go-redis/redis"
 	"github.com/omarqazi/airtrafficcontrol/model"
 	"io/ioutil"
-	"log"
 	"net/http"
-	"os"
 	"strings"
 )
-
-var redisClient *redis.Client = nil
-
-func init() {
-	redisAddress := "localhost:6379"
-	redisOverride := os.Getenv("REDIS_ADDR")
-	if len(redisOverride) > 0 {
-		redisAddress = redisOverride
-	}
-	redisClient = redis.NewClient(&redis.Options{
-		Addr:     redisAddress,
-		Password: "",
-		DB:       0,
-	})
-
-	if err := redisClient.Ping().Err(); err != nil {
-		log.Fatalln("Error connecting to redis: ", err)
-	}
-}
 
 type OrderController struct {
 }
