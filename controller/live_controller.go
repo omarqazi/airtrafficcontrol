@@ -5,7 +5,6 @@ import (
 	"github.com/gorilla/websocket"
 	"log"
 	"net/http"
-	"time"
 )
 
 var upgrader = websocket.Upgrader{
@@ -26,25 +25,43 @@ func (lc LiveController) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go lc.ReadMessagesAndPostToChannel(conn, r)
-
-	for {
-		if err := conn.WriteMessage(websocket.TextMessage, []byte("hi doggie")); err != nil {
-			return
-		}
-		time.Sleep(1 * time.Second)
-	}
+	go lc.WriteMessagesFromChannel(conn, r)
 }
 
 func (lc LiveController) ReadMessagesAndPostToChannel(conn *websocket.Conn, r *http.Request) {
-	for {
-		orderId := r.URL.Path
-		pubsubChannel := "drone-order-updates-" + orderId
+	redisChannel := lc.channelNameForRequest(r)
 
-		_, socketBytes, err := conn.ReadMessage()
+	for {
+		_, sb, err := conn.ReadMessage()
 		if err != nil {
 			return
 		}
 
-		redisClient.Publish(pubsubChannel, string(socketBytes))
+		redisClient.Publish(redisChannel, string(sb))
 	}
+}
+
+func (lc LiveController) WriteMessagesFromChannel(conn *websocket.Conn, r *http.Request) {
+	redisChannel := lc.channelNameForRequest(r)
+	pubsub := redisClient.Subscribe(redisChannel)
+	defer pubsub.Close()
+
+	if _, err := pubsub.Receive(); err != nil {
+		log.Println("Error connecting to pubsub:", err)
+		return
+	}
+
+	ch := pubsub.Channel()
+
+	for msg := range ch {
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(msg.Payload)); err != nil {
+			return
+		}
+	}
+}
+
+func (lc LiveController) channelNameForRequest(r *http.Request) string {
+	orderId := r.URL.Path
+	channelName := "drone-order-updates-" + orderId
+	return channelName
 }
