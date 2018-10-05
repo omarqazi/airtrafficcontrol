@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"github.com/go-redis/redis"
 	"github.com/omarqazi/airtrafficcontrol/model"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 )
 
 var redisClient *redis.Client = nil
@@ -47,6 +49,8 @@ func (oc OrderController) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		oc.GetNextOrder(w, r)
 	} else if r.Method == "PUT" {
 		oc.PopTopOrder(w, r)
+	} else if r.Method == "PATCH" {
+		oc.UpdateOrderStatus(w, r)
 	}
 }
 
@@ -127,4 +131,24 @@ func (oc OrderController) PopTopOrder(w http.ResponseWriter, r *http.Request) {
 
 	encoder := json.NewEncoder(w)
 	encoder.Encode(parsedOrder)
+}
+
+func (oc OrderController) UpdateOrderStatus(w http.ResponseWriter, r *http.Request) {
+	requestUrl := r.URL.Path
+	comps := strings.Split(requestUrl, "/")
+	orderId := comps[0]
+	pubsubChannel := "drone-order-updates-" + orderId
+
+	requestBody, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Fprintln(w, "error reading request body")
+		return
+	}
+
+	messageToPublish := string(requestBody)
+	redisClient.Publish(pubsubChannel, messageToPublish)
+
+	fmt.Fprintln(w, messageToPublish)
+
 }
