@@ -2,15 +2,19 @@ package controller
 
 import (
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"log"
 	"net/http"
+	"strings"
 )
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 }
+
+const pubsubDelimeter = "//&/"
 
 type LiveController struct {
 }
@@ -24,11 +28,14 @@ func (lc LiveController) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go lc.ReadMessagesAndPostToChannel(conn, r)
-	go lc.WriteMessagesFromChannel(conn, r)
+	clientUniqueId, _ := uuid.NewRandom()
+	clientId := clientUniqueId.String()
+
+	go lc.ReadMessagesAndPostToChannel(conn, r, clientId)
+	go lc.WriteMessagesFromChannel(conn, r, clientId)
 }
 
-func (lc LiveController) ReadMessagesAndPostToChannel(conn *websocket.Conn, r *http.Request) {
+func (lc LiveController) ReadMessagesAndPostToChannel(conn *websocket.Conn, r *http.Request, clientId string) {
 	redisChannel := lc.channelNameForRequest(r)
 
 	for {
@@ -37,11 +44,14 @@ func (lc LiveController) ReadMessagesAndPostToChannel(conn *websocket.Conn, r *h
 			return
 		}
 
-		redisClient.Publish(redisChannel, string(sb))
+		clientPayload := string(sb)
+		serializedPayload := clientId + pubsubDelimeter + clientPayload
+
+		redisClient.Publish(redisChannel, serializedPayload)
 	}
 }
 
-func (lc LiveController) WriteMessagesFromChannel(conn *websocket.Conn, r *http.Request) {
+func (lc LiveController) WriteMessagesFromChannel(conn *websocket.Conn, r *http.Request, clientId string) {
 	redisChannel := lc.channelNameForRequest(r)
 	pubsub := redisClient.Subscribe(redisChannel)
 	defer pubsub.Close()
@@ -54,8 +64,16 @@ func (lc LiveController) WriteMessagesFromChannel(conn *websocket.Conn, r *http.
 	ch := pubsub.Channel()
 
 	for msg := range ch {
-		if err := conn.WriteMessage(websocket.TextMessage, []byte(msg.Payload)); err != nil {
-			return
+		messagePayload := msg.Payload
+
+		comps := strings.Split(messagePayload, pubsubDelimeter)
+		messageSender := comps[0]
+		messageBody := strings.Join(comps[1:], pubsubDelimeter)
+
+		if messageSender != clientId {
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(messageBody)); err != nil {
+				return
+			}
 		}
 	}
 }
